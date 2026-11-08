@@ -1,0 +1,65 @@
+name: Build & Publish ReadableCallGraph
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # Required only for creating GitHub Releases from version tags.
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17 and cache Maven dependencies
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build and test IntelliJ plugin
+        run: mvn -B --no-transfer-progress clean package
+
+      - name: Verify plugin archive exists and is valid
+        shell: bash
+        run: |
+          shopt -s nullglob
+          archives=(target/ReadableCallGraph-*.zip)
+          if (( ${#archives[@]} == 0 )); then
+            echo 'ERROR: No installable plugin ZIP in target/' >&2
+            exit 1
+          fi
+          for file in "${archives[@]}"; do
+            unzip -t "$file" >/dev/null
+            if ! unzip -Z1 "$file" | grep -q '^ReadableCallGraph/lib/.*\.jar$'; then
+              echo "ERROR: $file is missing the plugin JAR" >&2
+              exit 1
+            fi
+            echo "Verified: $file"
+          done
+
+      - name: Upload installable plugin ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReadableCallGraph-plugin
+          path: target/ReadableCallGraph-*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release (version tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/ReadableCallGraph-*.zip
+          generate_release_notes: true
