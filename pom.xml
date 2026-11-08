@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>dev.readablegraph</groupId>
+    <artifactId>readable-call-graph</artifactId>
+    <version>0.2.0</version>
+    <name>Readable Call Graph</name>
+    <description>Readable Java call graph plugin for IntelliJ IDEA</description>
+    <packaging>jar</packaging>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.release>17</maven.compiler.release>
+        <idea.version>2024.1</idea.version>
+    </properties>
+
+    <!-- IntelliJ IDEA Community edition SDK (2024.1 is compiled for Java 17). -->
+    <repositories>
+        <repository>
+            <id>jetbrains-intellij-releases</id>
+            <url>https://www.jetbrains.com/intellij-repository/releases</url>
+        </repository>
+    </repositories>
+
+    <build>
+        <plugins>
+            <!-- The SDK is distributed by JetBrains as a ZIP, not a single JAR.
+                 Unpack it once; Maven caches the download in ~/.m2/repository. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.8.1</version>
+                <executions>
+                    <execution>
+                        <id>unpack-intellij-sdk</id>
+                        <phase>generate-sources</phase>
+                        <goals><goal>unpack</goal></goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>com.jetbrains.intellij.idea</groupId>
+                                    <artifactId>ideaIC</artifactId>
+                                    <version>${idea.version}</version>
+                                    <type>zip</type>
+                                    <outputDirectory>${project.build.directory}/intellij-sdk</outputDirectory>
+                                    <overWrite>false</overWrite>
+                                </artifactItem>
+                            </artifactItems>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Maven's compiler cannot put a ZIP distribution on its classpath.
+                 Ant javac is called by Maven with all IntelliJ platform and Java-plugin JARs.
+                 The resulting class files go to Maven's standard target/classes. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.14.0</version>
+                <configuration>
+                    <release>17</release>
+                    <skipMain>true</skipMain>
+                    <testSkip>true</testSkip>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>compile-plugin-against-ide-sdk</id>
+                        <phase>process-sources</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <mkdir dir="${project.build.outputDirectory}" />
+                                <javac srcdir="${project.basedir}/src/main/java"
+                                       destdir="${project.build.outputDirectory}"
+                                       release="17" encoding="UTF-8" includeantruntime="false"
+                                       fork="false">
+                                    <classpath>
+                                        <fileset dir="${project.build.directory}/intellij-sdk" erroronmissingdir="false">
+                                            <include name="**/lib/**/*.jar" />
+                                        </fileset>
+                                    </classpath>
+                                </javac>
+                            </target>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>compile-and-run-layout-smoke-test</id>
+                        <phase>test</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <mkdir dir="${project.build.testOutputDirectory}" />
+                                <javac srcdir="${project.basedir}/src/test/java"
+                                       destdir="${project.build.testOutputDirectory}"
+                                       release="17" encoding="UTF-8" includeantruntime="false">
+                                    <classpath>
+                                        <pathelement location="${project.build.outputDirectory}" />
+                                    </classpath>
+                                </javac>
+                                <java classname="dev.readablegraph.core.ReadableLayoutSmokeTest"
+                                      fork="true" failonerror="true">
+                                    <classpath>
+                                        <pathelement location="${project.build.outputDirectory}" />
+                                        <pathelement location="${project.build.testOutputDirectory}" />
+                                    </classpath>
+                                    <sysproperty key="java.awt.headless" value="true" />
+                                    <sysproperty key="rcg.preview.dir" value="${project.build.directory}/preview" />
+                                </java>
+                            </target>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>make-installable-plugin-zip</id>
+                        <phase>package</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <zip destfile="${project.build.directory}/ReadableCallGraph-${project.version}.zip">
+                                    <zipfileset dir="${project.build.directory}"
+                                                includes="${project.build.finalName}.jar"
+                                                prefix="ReadableCallGraph/lib" />
+                                </zip>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.2</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>

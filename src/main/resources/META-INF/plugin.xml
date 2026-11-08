@@ -1,0 +1,18 @@
+<idea-plugin>
+    <id>dev.readablegraph.idea</id>
+    <name>Readable Call Graph</name>
+    <vendor>Open Source</vendor>
+    <version>0.2.0</version>
+    <description><![CDATA[
+        Visualizes Java method-to-caller-class relationships using spacious class cards,
+        orthogonal edge routing, project filtering, and focus mode.
+    ]]></description>
+    <idea-version since-build="241"/>
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.java</depends>
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Call Graph"
+                    anchor="right"
+                    factoryClass="dev.readablegraph.idea.CallGraphToolWindowFactory"/>
+    </extensions>
+</idea-plugin>
