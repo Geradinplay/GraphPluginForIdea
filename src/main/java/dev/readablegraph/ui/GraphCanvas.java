@@ -10,10 +10,13 @@ import java.awt.geom.*;
 import java.util.*;
 import java.util.function.BiConsumer;
 
-/** Pure Swing renderer. Mouse: click class, double-click to navigate, wheel to scroll/zoom (Ctrl). */
+/** Swing renderer: mouse wheel zooms around the cursor, drag pans, double-click opens code. */
 public final class GraphCanvas extends JComponent {
     private ReadableLayout.Result layout = new ReadableLayout.Result(Map.of(), java.util.List.of(), 800, 500);
     private String selectedClass;
+    // Low minimum allows an overview of even very tall graphs with tens of thousands of classes.
+    public static final double MIN_ZOOM = 0.0001;
+    public static final double MAX_ZOOM = 6.0;
     private double zoom = 1.0;
     private final BiConsumer<String, String> selectionHandler;
     private Point dragPoint;
@@ -65,10 +68,9 @@ public final class GraphCanvas extends JComponent {
             }
         });
         addMouseWheelListener(e -> {
-            if (e.isControlDown()) {
-                setZoom(zoom * Math.pow(1.13, -e.getPreciseWheelRotation()));
-                e.consume();
-            }
+            // The wheel ALWAYS zooms, without Ctrl. Preserve the graph point beneath the cursor.
+            zoomAtCanvasPoint(e.getPoint(), Math.pow(1.20, -e.getPreciseWheelRotation()));
+            e.consume(); // Do not let JScrollPane interpret this as vertical scrolling.
         });
     }
 
@@ -79,17 +81,64 @@ public final class GraphCanvas extends JComponent {
     public ReadableLayout.Result getLayoutResult() { return layout; }
     public void setSelectedClass(String id) { selectedClass = id; repaint(); }
     public String getSelectedClass() { return selectedClass; }
-    public void setZoom(double z) { zoom = Math.min(2.5, Math.max(.20, z)); refreshSize(); }
+    public void setZoom(double z) {
+        if (!Double.isFinite(z)) return;
+        double next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+        if (zoom == next) return;
+        double previous = zoom;
+        zoom = next;
+        refreshSize();
+        firePropertyChange("zoom", previous, zoom);
+    }
     public double getZoom() { return zoom; }
+
+    /** Zoom around a point in viewport coordinates (used by toolbar buttons). */
+    public void zoomAtViewportCenter(double factor) {
+        Container parent = SwingUtilities.getAncestorOfClass(JViewport.class, this);
+        if (parent instanceof JViewport viewport) {
+            zoomAtViewportPoint(new Point(viewport.getWidth() / 2, viewport.getHeight() / 2), factor);
+        } else setZoom(zoom * factor);
+    }
+
+    /** Zoom while keeping the graph coordinate under the pointer fixed on screen. */
+    private void zoomAtCanvasPoint(Point canvasPoint, double factor) {
+        Container parent = SwingUtilities.getAncestorOfClass(JViewport.class, this);
+        if (parent instanceof JViewport viewport) {
+            Point viewPosition = viewport.getViewPosition();
+            Point viewportPoint = new Point(canvasPoint.x - viewPosition.x, canvasPoint.y - viewPosition.y);
+            zoomAtViewportPoint(viewportPoint, factor);
+        } else setZoom(zoom * factor);
+    }
+
+    public void zoomAtViewportPoint(Point viewportPoint, double factor) {
+        Container parent = SwingUtilities.getAncestorOfClass(JViewport.class, this);
+        if (!(parent instanceof JViewport viewport)) { setZoom(zoom * factor); return; }
+        Point oldPosition = viewport.getViewPosition();
+        double worldX = (oldPosition.x + viewportPoint.x) / zoom;
+        double worldY = (oldPosition.y + viewportPoint.y) / zoom;
+        double oldZoom = zoom;
+        setZoom(zoom * factor);
+        if (oldZoom == zoom) return;
+        Dimension size = getPreferredSize();
+        Dimension extent = viewport.getExtentSize();
+        int x = clampScroll(worldX * zoom - viewportPoint.x, size.width - extent.width);
+        int y = clampScroll(worldY * zoom - viewportPoint.y, size.height - extent.height);
+        viewport.setViewPosition(new Point(x, y));
+    }
+
+    private static int clampScroll(double value, int maximum) {
+        return (int) Math.max(0, Math.min(Math.max(0, maximum), Math.round(value)));
+    }
+
     public void fitTo(Dimension viewport) {
         if (viewport.width < 1 || viewport.height < 1) return;
-        double zx = viewport.width / layout.width();
-        double zy = viewport.height / layout.height();
-        setZoom(Math.min(zx, zy) * .97);
+        double zx = viewport.width / Math.max(1, layout.width());
+        double zy = viewport.height / Math.max(1, layout.height());
+        setZoom(Math.min(zx, zy) * .95);
     }
     private void refreshSize() {
-        setPreferredSize(new Dimension((int) Math.min(Integer.MAX_VALUE / 4, Math.ceil(layout.width() * zoom)),
-                (int) Math.min(Integer.MAX_VALUE / 4, Math.ceil(layout.height() * zoom))));
+        setPreferredSize(new Dimension((int) Math.max(1, Math.min(Integer.MAX_VALUE / 4, Math.ceil(layout.width() * zoom))),
+                (int) Math.max(1, Math.min(Integer.MAX_VALUE / 4, Math.ceil(layout.height() * zoom)))));
         revalidate(); repaint();
     }
     private Point2D.Double at(Point p) { return new Point2D.Double(p.x / zoom, p.y / zoom); }
@@ -110,7 +159,7 @@ public final class GraphCanvas extends JComponent {
                 return c.node().id() + " (двойной щелчок — перейти к классу)";
             }
         }
-        return "Ctrl+колесо — масштаб; перетаскивание — панорама; двойной щелчок по классу/методу — открыть код";
+        return "Колесо — масштаб под курсором; перетаскивание — панорама; двойной щелчок — открыть код";
     }
 
     @Override protected void paintComponent(Graphics raw) {
@@ -120,8 +169,11 @@ public final class GraphCanvas extends JComponent {
             g.setColor(BACKGROUND);
             g.fillRect(0, 0, getWidth(), getHeight());
             g.scale(zoom, zoom);
-            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            boolean overview = zoom < 0.12;
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                    overview ? RenderingHints.VALUE_ANTIALIAS_OFF : RenderingHints.VALUE_ANTIALIAS_ON);
+            if (!overview) g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
+                    RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             // Paint only objects intersecting the visible viewport; never construct
             // a giant offscreen image for a graph with thousands of classes.
             Rectangle visible = g.getClipBounds();
@@ -140,10 +192,13 @@ public final class GraphCanvas extends JComponent {
                     else p.lineTo(point.getX(), point.getY());
                 }
                 g.draw(p);
-                drawArrow(g, routed.path());
+                if (!overview) drawArrow(g, routed.path());
             }
             for (var placed : layout.classes().values())
-                if (visible == null || placed.bounds().intersects(visible)) drawClass(g, placed);
+                if (visible == null || placed.bounds().intersects(visible)) {
+                    if (overview) drawOverviewClass(g, placed);
+                    else drawClass(g, placed);
+                }
             if (layout.classes().isEmpty()) {
                 g.setFont(getFont().deriveFont(16f));
                 g.setColor(MUTED);
@@ -175,6 +230,13 @@ public final class GraphCanvas extends JComponent {
         arrow.lineTo(end.x - size * Math.cos(a + .48), end.y - size * Math.sin(a + .48));
         arrow.closePath();
         g.fill(arrow);
+    }
+
+    /** At overview scale do not render thousands of illegible glyphs; keep every card visible. */
+    private void drawOverviewClass(Graphics2D g, ReadableLayout.PlacedClass p) {
+        Rectangle2D.Double r = p.bounds();
+        g.setColor(p.node().id().equals(selectedClass) ? SELECTED : BORDER);
+        g.fill(r);
     }
 
     private void drawClass(Graphics2D g, ReadableLayout.PlacedClass p) {

@@ -43,6 +43,9 @@ public final class CallGraphPanel extends JPanel {
     private boolean scanning;
     private final JButton focusButton = new JButton("В фокус");
     private final JButton fit = new JButton("Уместить");
+    private final JButton zoomIn = new JButton("+");
+    private final JButton zoomOut = new JButton("−");
+    private final JLabel zoomLabel = new JLabel("100%");
     private final JButton exportSvg = new JButton("Экспорт SVG");
     private final JCheckBox focusOnly = new JCheckBox("Только связи выбранного класса", false);
     private final JComboBox<String> direction = new JComboBox<>(new String[]{
@@ -65,6 +68,11 @@ public final class CallGraphPanel extends JPanel {
         scroll.getViewport().setBackground(new Color(247, 249, 252));
         scroll.getVerticalScrollBar().setUnitIncrement(30);
         scroll.getHorizontalScrollBar().setUnitIncrement(30);
+        // When the canvas is smaller than the viewport, the wheel still works over empty space.
+        scroll.getViewport().addMouseWheelListener(e -> {
+            canvas.zoomAtViewportPoint(e.getPoint(), Math.pow(1.20, -e.getPreciseWheelRotation()));
+            e.consume();
+        });
 
         JPanel toolbar = new JPanel();
         toolbar.setLayout(new BoxLayout(toolbar, BoxLayout.Y_AXIS));
@@ -82,6 +90,11 @@ public final class CallGraphPanel extends JPanel {
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 7, 2));
         buttons.add(refresh);
         buttons.add(fit);
+        zoomOut.setToolTipText("Отдалить диаграмму (или колесо вниз)");
+        zoomIn.setToolTipText("Приблизить диаграмму (или колесо вверх)");
+        buttons.add(zoomOut);
+        buttons.add(zoomLabel);
+        buttons.add(zoomIn);
         buttons.add(exportSvg);
         buttons.add(new JLabel("Расстояние:"));
         spacing.setMajorTickSpacing(100);
@@ -106,7 +119,10 @@ public final class CallGraphPanel extends JPanel {
         browseFolder.addActionListener(e -> chooseFolder());
         folder.addActionListener(e -> scan());
         refresh.addActionListener(e -> scan());
-        fit.addActionListener(e -> { canvas.fitTo(scroll.getViewport().getExtentSize()); scroll.getViewport().setViewPosition(new Point(0, 0)); });
+        fit.addActionListener(e -> fitGraph());
+        zoomIn.addActionListener(e -> canvas.zoomAtViewportCenter(1.20));
+        zoomOut.addActionListener(e -> canvas.zoomAtViewportCenter(1.0 / 1.20));
+        canvas.addPropertyChangeListener("zoom", e -> zoomLabel.setText(formatZoom(canvas.getZoom())));
         exportSvg.addActionListener(e -> exportSvg());
         chooser.addActionListener(e -> { if (!updatingCombo) rebuild(); });
         focusButton.addActionListener(e -> { focusOnly.setSelected(true); rebuild(); });
@@ -114,6 +130,18 @@ public final class CallGraphPanel extends JPanel {
         direction.addActionListener(e -> rebuild());
         spacing.addChangeListener(e -> { if (!spacing.getValueIsAdjusting()) rebuild(); });
         // Do not auto-scan enormous projects until the user chooses a folder.
+    }
+
+    private static String formatZoom(double zoom) {
+        double percent = zoom * 100;
+        return percent >= 10 ? String.format(Locale.ROOT, "%.0f%%", percent)
+                : percent >= 1 ? String.format(Locale.ROOT, "%.1f%%", percent)
+                : String.format(Locale.ROOT, "%.2f%%", percent);
+    }
+
+    private void fitGraph() {
+        canvas.fitTo(scroll.getViewport().getExtentSize());
+        scroll.getViewport().setViewPosition(new Point(0, 0));
     }
 
     private void chooseFolder() {
@@ -308,17 +336,12 @@ public final class CallGraphPanel extends JPanel {
                 endProgress();
                 canvas.setLayoutResult(result);
                 canvas.setSelectedClass(id);
-                canvas.setZoom(1.0);
-                var selected = canvas.getLayoutResult().classes().get(id);
-                if (selected != null) {
-                    Dimension area = scroll.getViewport().getExtentSize();
-                    int x = (int) Math.max(0, selected.bounds().getCenterX() - area.width * .35);
-                    int y = (int) Math.max(0, selected.bounds().getCenterY() - area.height * .5);
-                    scroll.getViewport().setViewPosition(new Point(x, y));
-                }
+                // Start with a complete overview instead of one enormous class.
+                // The user can zoom toward any region with the mouse wheel.
+                fitGraph();
                 status.setText("Проиндексировано: " + model.classes.size() + " классов, " + model.edges.size()
                         + " связей | Нарисовано: " + diagram.classes.size() + " классов, " + diagram.edges.size()
-                        + " стрелок | Ctrl+колесо: масштаб | двойной щелчок: код");
+                        + " стрелок | Колесо: масштаб | двойной щелчок: код");
             }
             @Override public void onCancel() {
                 if (generationId == layoutGeneration.get()) { endProgress(); status.setText("Раскладка отменена."); }
