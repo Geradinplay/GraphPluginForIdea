@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>dev.readablegraph</groupId>
     <artifactId>readable-call-graph</artifactId>
-    <version>0.2.0</version>
+    <version>0.3.0</version>
     <name>Readable Call Graph</name>
     <description>Readable Java call graph plugin for IntelliJ IDEA</description>
     <packaging>jar</packaging>
@@ -13,7 +13,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>17</maven.compiler.release>
-        <idea.version>2024.1</idea.version>
+        <intellij.sdk.version>2024.1</intellij.sdk.version>
     </properties>
 
     <!-- IntelliJ IDEA Community edition SDK (2024.1 is compiled for Java 17). -->
@@ -42,7 +42,7 @@
                                 <artifactItem>
                                     <groupId>com.jetbrains.intellij.idea</groupId>
                                     <artifactId>ideaIC</artifactId>
-                                    <version>${idea.version}</version>
+                                    <version>${intellij.sdk.version}</version>
                                     <type>zip</type>
                                     <outputDirectory>${project.build.directory}/intellij-sdk</outputDirectory>
                                     <overWrite>false</overWrite>
@@ -63,7 +63,6 @@
                 <configuration>
                     <release>17</release>
                     <skipMain>true</skipMain>
-                    <testSkip>true</testSkip>
                 </configuration>
             </plugin>
             <plugin>

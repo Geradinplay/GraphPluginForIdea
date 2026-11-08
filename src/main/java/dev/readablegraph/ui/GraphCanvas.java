@@ -88,8 +88,8 @@ public final class GraphCanvas extends JComponent {
         setZoom(Math.min(zx, zy) * .97);
     }
     private void refreshSize() {
-        setPreferredSize(new Dimension((int) Math.ceil(layout.width() * zoom),
-                (int) Math.ceil(layout.height() * zoom)));
+        setPreferredSize(new Dimension((int) Math.min(Integer.MAX_VALUE / 4, Math.ceil(layout.width() * zoom)),
+                (int) Math.min(Integer.MAX_VALUE / 4, Math.ceil(layout.height() * zoom))));
         revalidate(); repaint();
     }
     private Point2D.Double at(Point p) { return new Point2D.Double(p.x / zoom, p.y / zoom); }
@@ -122,8 +122,12 @@ public final class GraphCanvas extends JComponent {
             g.scale(zoom, zoom);
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            // Paint only objects intersecting the visible viewport; never construct
+            // a giant offscreen image for a graph with thousands of classes.
+            Rectangle visible = g.getClipBounds();
             // Edges beneath cards: cards stay readable even when paths are complex.
             for (var routed : layout.edges()) {
+                if (visible != null && !intersectsPath(routed.path(), visible)) continue;
                 boolean strong = selectedClass == null || selectedClass.equals(routed.edge().fromClass())
                         || selectedClass.equals(routed.edge().toClass());
                 g.setColor(strong ? EDGE : new Color(130, 144, 163, 52));
@@ -138,13 +142,25 @@ public final class GraphCanvas extends JComponent {
                 g.draw(p);
                 drawArrow(g, routed.path());
             }
-            for (var placed : layout.classes().values()) drawClass(g, placed);
+            for (var placed : layout.classes().values())
+                if (visible == null || placed.bounds().intersects(visible)) drawClass(g, placed);
             if (layout.classes().isEmpty()) {
                 g.setFont(getFont().deriveFont(16f));
                 g.setColor(MUTED);
                 g.drawString("Нажмите «Обновить», чтобы построить связи проекта", 50, 60);
             }
         } finally { g.dispose(); }
+    }
+
+    private static boolean intersectsPath(java.util.List<Point2D.Double> points, Rectangle visible) {
+        if (points.isEmpty()) return false;
+        double xmin = Double.POSITIVE_INFINITY, ymin = Double.POSITIVE_INFINITY;
+        double xmax = Double.NEGATIVE_INFINITY, ymax = Double.NEGATIVE_INFINITY;
+        for (Point2D.Double p : points) {
+            xmin = Math.min(xmin, p.x); xmax = Math.max(xmax, p.x);
+            ymin = Math.min(ymin, p.y); ymax = Math.max(ymax, p.y);
+        }
+        return visible.intersects(xmin - 3, ymin - 3, Math.max(6, xmax - xmin + 6), Math.max(6, ymax - ymin + 6));
     }
 
     private static void drawArrow(Graphics2D g, java.util.List<Point2D.Double> points) {
@@ -196,6 +212,7 @@ public final class GraphCanvas extends JComponent {
         }
     }
     private static String clipText(Graphics2D g, String text, double width) {
+        if (text == null) text = "?";
         if (g.getFontMetrics().stringWidth(text) <= width) return text;
         int len = text.length();
         while (len > 1 && g.getFontMetrics().stringWidth(text.substring(0, len) + "…") > width) len--;

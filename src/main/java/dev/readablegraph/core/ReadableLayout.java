@@ -32,6 +32,7 @@ public final class ReadableLayout {
 
     public Result layout(GraphModel model, int spacing) {
         if (model.classes.isEmpty()) return new Result(Map.of(), List.of(), 800, 500);
+        if (model.classes.size() > 24 || model.edges.size() > 40) return layoutMassive(model, spacing);
         int gapX = 220 + spacing;
         int gapY = 85 + spacing / 2;
         Map<String, Set<String>> neighbors = new HashMap<>();
@@ -132,6 +133,7 @@ public final class ReadableLayout {
     public Result layoutFocus(GraphModel model, String focusId, int spacing) {
         GraphModel.ClassNode focus = model.classes.get(focusId);
         if (focus == null) return layout(model, spacing);
+        if (model.classes.size() > 24 || model.edges.size() > 40) return layoutMassive(model, spacing);
         int gapX = 220 + spacing;
         int gapY = 85 + spacing / 2;
         Map<String, Integer> leftScore = new HashMap<>(), rightScore = new HashMap<>();
@@ -172,6 +174,82 @@ public final class ReadableLayout {
                 MARGIN + (usable - rightH) / 2, gapY);
         return new Result(Collections.unmodifiableMap(placed),
                 routeEdges(model.edges, placed, width, height), width, height);
+    }
+
+    /** Linear-memory layout for very large projects. All classes and all edges are retained.
+     * Routes use gutters beside columns and shared free corridors between rows, rather
+     * than allocating an A* obstacle grid for every edge. Crossing-free drawings cannot
+     * be guaranteed for arbitrary non-planar graphs. */
+    private Result layoutMassive(GraphModel model, int spacing) {
+        ArrayList<GraphModel.ClassNode> nodes = new ArrayList<>(model.classes.values());
+        nodes.sort(Comparator.comparing(GraphModel.ClassNode::packageName, Comparator.nullsFirst(String::compareTo))
+                .thenComparing(GraphModel.ClassNode::id));
+        int count = nodes.size();
+        int cols = count >= 500 ? 12 : (count >= 150 ? 8 : 5);
+        cols = Math.min(count, cols);
+        int rows = (count + cols - 1) / cols;
+        double gapX = 260 + spacing;
+        double gapY = 160 + spacing / 2.0;
+        double[] heights = new double[rows];
+        for (int i = 0; i < count; i++) {
+            heights[i / cols] = Math.max(heights[i / cols], boxHeight(nodes.get(i)));
+        }
+        double[] ys = new double[rows];
+        double y = MARGIN + 30;
+        for (int r = 0; r < rows; r++) { ys[r] = y; y += heights[r] + gapY; }
+        double totalWidth = MARGIN * 2 + cols * WIDTH + (cols - 1) * gapX + 100;
+        double totalHeight = y + MARGIN;
+        LinkedHashMap<String, PlacedClass> placed = new LinkedHashMap<>();
+        HashMap<String, Integer> rowOf = new HashMap<>(count * 2);
+        HashMap<String, Map<String, Integer>> methodRows = new HashMap<>(count * 2);
+        for (int i = 0; i < count; i++) {
+            if ((i & 255) == 0 && Thread.currentThread().isInterrupted())
+                throw new java.util.concurrent.CancellationException("Раскладка отменена");
+            GraphModel.ClassNode node = nodes.get(i);
+            int row = i / cols, col = i % cols;
+            double x = MARGIN + col * (WIDTH + gapX);
+            placed.put(node.id(), new PlacedClass(node, new Rectangle2D.Double(x, ys[row], WIDTH, boxHeight(node))));
+            rowOf.put(node.id(), row);
+            HashMap<String, Integer> positions = new HashMap<>();
+            for (int mi = 0; mi < node.methods().size(); mi++) positions.put(node.methods().get(mi).id(), mi);
+            methodRows.put(node.id(), positions);
+        }
+        HashMap<String, Integer> incomingTotal = new HashMap<>();
+        for (GraphModel.CallEdge edge : model.edges) incomingTotal.merge(edge.toClass(), 1, Integer::sum);
+        HashMap<String, Integer> incomingSeen = new HashMap<>();
+        HashMap<String, Integer> outgoingSeen = new HashMap<>();
+        ArrayList<RoutedEdge> routes = new ArrayList<>(model.edges.size());
+        int ordinal = 0;
+        for (GraphModel.CallEdge edge : model.edges) {
+            if ((ordinal++ & 255) == 0 && Thread.currentThread().isInterrupted())
+                throw new java.util.concurrent.CancellationException("Раскладка отменена");
+            PlacedClass from = placed.get(edge.fromClass()), to = placed.get(edge.toClass());
+            if (from == null || to == null) continue;
+            Rectangle2D.Double a = from.bounds(), b = to.bounds();
+            int method = methodRows.get(edge.fromClass()).getOrDefault(edge.methodId(), 0);
+            double sy = a.y + HEADER + (method + .5) * ROW;
+            int fanIndex = outgoingSeen.merge(edge.fromClass() + "\0" + edge.methodId(), 1, Integer::sum) - 1;
+            int ti = incomingSeen.merge(edge.toClass(), 1, Integer::sum);
+            int total = incomingTotal.getOrDefault(edge.toClass(), 1);
+            double ty = b.y + 18 + (b.height - 36) * ti / (double)(total + 1);
+            int targetRow = rowOf.get(edge.toClass());
+            // Horizontal runs are inside a corridor shared by all columns,
+            // so they never cut through class cards.
+            double corridor = ys[targetRow] - gapY / 2.0;
+            double lane = ((ordinal * 13L) % Math.max(1L, (long)(gapY / 7) - 2)) * 7.0;
+            double roadY = Math.max(MARGIN + 4, corridor - gapY / 4 + lane);
+            double rightGutter = a.getMaxX() + 32 + (fanIndex % 11) * 8;
+            double leftGutter = b.x - 32 - ((ti - 1) % 11) * 8;
+            List<Point2D.Double> path = simplify(List.of(
+                    new Point2D.Double(a.getMaxX(), sy),
+                    new Point2D.Double(rightGutter, sy),
+                    new Point2D.Double(rightGutter, roadY),
+                    new Point2D.Double(leftGutter, roadY),
+                    new Point2D.Double(leftGutter, ty),
+                    new Point2D.Double(b.x, ty)));
+            routes.add(new RoutedEdge(edge, path));
+        }
+        return new Result(Collections.unmodifiableMap(placed), List.copyOf(routes), totalWidth, totalHeight);
     }
 
     private static int methodIndex(GraphModel.ClassNode node, String methodId) {

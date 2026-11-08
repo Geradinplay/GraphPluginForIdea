@@ -2,7 +2,7 @@
     <id>dev.readablegraph.idea</id>
     <name>Readable Call Graph</name>
     <vendor>Open Source</vendor>
-    <version>0.2.0</version>
+    <version>0.3.0</version>
     <description><![CDATA[
         Visualizes Java method-to-caller-class relationships using spacious class cards,
         orthogonal edge routing, project filtering, and focus mode.
